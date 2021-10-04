@@ -1,7 +1,12 @@
 
+use std::collections::HashMap;
+use std::any::Any;
+
 use reqwest::Client as ReqwestClient;
 
 pub mod types;
+pub mod scopes;
+pub mod methods;
 
 use types::*;
 
@@ -20,15 +25,16 @@ impl SlackClient {
         }
     }
 
-    async fn make_request<T: methods::Method>(&self, req: T::Input, opt: T::OptInput) -> Result<SlackResponse<T::Return>, SlackError> {
+    async fn make_request<T: methods::Method>(&self, inputs: HashMap<String, &dyn Any>) -> Result<SlackResponse<T::Return>, SlackError> {
         let url = Self::URL_BASE.to_string() + T::api_str();
 
         let request = self.req_client
             .post(url)
             .header("Authorization", format!("Bearer {}", self.token));
 
-        let request = T::write_out(request, req, opt);
+        let request = T::write_out(request, inputs);
 
+        // TODO: What if it's gzipped or not JSON?
         let raw_response: RawResponse = request
             .send()
             .await?
@@ -47,10 +53,6 @@ impl SlackClient {
             Err(response)
         }
     }
-
-    async fn make_request_req<T: methods::Method>(&self, req: T::Input) -> Result<SlackResponse<T::Return>, SlackError> {
-        self.make_request::<T>(req, T::opt_empty()).await
-    }
 }
 
 #[cfg(test)]
@@ -60,17 +62,21 @@ mod tests {
     #[tokio::test]
     async fn test_basics() {
         let client = SlackClient::new(
-            "xoxb-2463664257206-2483035347057-kXleXcVXzYGmBc1Kt1B5xdcw"
+            env!("SLACK_TOKEN")
         );
 
         println!(
             "{:#?}",
-            client.make_request_req::<methods::ConversationList>(()).await,
+            client.make_request::<Method!["conversations.list"]>(HashMap::new()).await,
         );
 
         println!(
             "{:#?}",
-            client.make_request::<methods::ConversationList>((), (None, Some(true), None, None, None)).await,
+            client.make_request::<Method!["conversations.list"]>(
+                HashMap::from([
+                    (String::from("exclude_archived"), &true as &dyn std::any::Any),
+                ])
+            ).await,
         )
     }
 }

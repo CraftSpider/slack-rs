@@ -1,4 +1,3 @@
-
 use serde::{Serialize, Deserialize, Deserializer};
 use serde::de::Error as SerdeError;
 use std::collections::HashMap;
@@ -14,136 +13,10 @@ where
     }
 }
 
-pub mod methods {
-    use reqwest::RequestBuilder;
-    use serde::de::DeserializeOwned;
-
-    use super::*;
-
-    macro_rules! method {
-        ($name:ident =>
-            path: $api:literal,
-            $(scopes: [$($scopes:ident),*],)?
-            $(ratelimit: $limit:ident,)?
-            $(req_inputs: [$($in_names:ident => $in_tys:ty),*],)?
-            $(inputs: [$($in_opt_names:ident => $in_opt_tys:ty),*],)?
-            $(outputs: [$($ret_names:ident => $ret_tys:ty),*],)?
-        ) => {
-            pub enum $name {}
-
-            #[allow(unused_parens)]
-            impl Method for $name {
-                type Input = ( $( $( $in_tys ),* )? );
-                type OptInput = ( $( $( Option<$in_opt_tys> ),* )? );
-
-                type Return = ($( $( $ret_tys ),* )?);
-
-                fn api_str() -> &'static str {
-                    $api
-                }
-
-                $(
-                fn required_scopes() -> Vec<Scope> {
-                    vec![$( Scope::$scopes ),*]
-                }
-                )?
-
-                $(
-                fn rate_limit() -> Option<RateLimit> {
-                    Some(RateLimit::$limit)
-                }
-                )?
-
-                fn opt_empty() -> Self::OptInput {
-                    ( $( $( None::<$in_opt_tys> ),* )? )
-                }
-
-                #[allow(unused_variables, unused_mut)]
-                fn write_out(mut request: RequestBuilder, req: Self::Input, opt: Self::OptInput) -> RequestBuilder {
-                    let mut output: HashMap<_, serde_json::Value> = HashMap::new();
-
-                    $(
-                    let ( $( $in_names ),* ) = req;
-
-                    $(
-                    output.insert(
-                        stringify!($in_names),
-                        serde_json::to_value($in_names).unwrap()
-                    );
-                    )*
-
-                    )?
-
-                    $(
-                    let ( $( $in_opt_names ),* ) = opt;
-
-                    $(
-                    $in_opt_names
-                        .map(|val| output.insert(
-                            stringify!($in_opt_names),
-                            serde_json::to_value(val).unwrap()
-                        ));
-                    )*
-
-                    )?
-
-                    request.form(&output)
-                }
-
-                #[allow(unused_variables, unused_mut)]
-                fn parse_data(mut map: HashMap<String, serde_json::Value>) -> Self::Return {
-                    let out = ();
-
-                    $(
-                    let out = ($(
-                        <$ret_tys>::deserialize(map.remove(stringify!($ret_names)).unwrap()).unwrap()
-                    ),*);
-                    )?
-
-                    debug_assert!(map.is_empty(), "Expected extra data to be empty after parsing, instead got {:?}", map);
-                    out
-                }
-            }
-        };
-    }
-
-    pub trait Method {
-        type Input;
-        type OptInput;
-
-        type Return: DeserializeOwned;
-
-        fn api_str() -> &'static str;
-
-        /// The scopes necessary to use this endpoint. Defaults to none
-        fn required_scopes() -> Vec<Scope> {
-            vec![]
-        }
-
-        /// The rate limits on this API. Defaults to none
-        fn rate_limit() -> Option<RateLimit> {
-            None
-        }
-
-        fn opt_empty() -> Self::OptInput;
-
-        fn write_out(request: RequestBuilder, req: Self::Input, opt: Self::OptInput) -> RequestBuilder;
-
-        fn parse_data(map: HashMap<String, serde_json::Value>) -> Self::Return;
-    }
-
-    method! {
-        ConversationList =>
-            path: "conversations.list",
-            scopes: [ChannelsRead, GroupsRead, ImRead, MpimRead],
-            ratelimit: Tier2,
-            inputs: [cursor => String, exclude_archived => bool, limit => u64, team_id => TeamId, types => String],
-            outputs: [channels => Vec<Conversation>, response_metadata => ResponseMeta],
-    }
-}
-
 #[derive(Debug, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum Error {
+    AccountInactive,
     NotAuthed,
     NotAllowedTokenType,
 }
@@ -153,6 +26,7 @@ impl Error {
         str.split(",")
             .map(|item| {
                 match item {
+                    "account_inactive" => Error::AccountInactive,
                     "not_authed" => Error::NotAuthed,
                     "not_allowed_token_type" => Error::NotAllowedTokenType,
                     _ => panic!("Unknown Error: {}", item)
@@ -164,6 +38,7 @@ impl Error {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum Warning {}
 
 impl Warning {
@@ -176,13 +51,6 @@ impl Warning {
             })
             .collect()
     }
-}
-
-pub enum Scope {
-    ChannelsRead,
-    GroupsRead,
-    ImRead,
-    MpimRead,
 }
 
 pub enum RateLimit {
@@ -200,8 +68,34 @@ pub enum RateLimit {
 pub struct AppToken(String);
 
 impl AppToken {
-    fn new(str: &str) -> Option<AppToken> {
+    pub fn new(str: &str) -> Option<AppToken> {
         if str.starts_with("xapp") {
+            Some(AppToken(str.to_string()))
+        } else {
+            None
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct BotToken(String);
+
+impl BotToken {
+    pub fn new(str: &str) -> Option<AppToken> {
+        if str.starts_with("xoxb") {
+            Some(AppToken(str.to_string()))
+        } else {
+            None
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct UserToken(String);
+
+impl UserToken {
+    pub fn new(str: &str) -> Option<AppToken> {
+        if str.starts_with("xoxp") {
             Some(AppToken(str.to_string()))
         } else {
             None
